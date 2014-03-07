@@ -13,13 +13,13 @@ def Process(**kwargs):
 			message = "billing.operations.Process error: \
 			billinghistory_object = Billinghistory.objects.Update(**kwargs) \
 			returned false - we didn't log transaction to billinghistory, \
-			but charged a Purse! Kwargs were: %s" % kwargs
+			but charged a Purse! Kwargs used: %s" % kwargs
 			Handle(message)
 	else:
 		message = "Operations.Process error: \
 		purses_object = Purses.objects.Update(**kwargs) \
 		returned false - we didn't update a Purse after some transaction. \
-		Kwargs were: %s" % kwargs
+		Kwargs used: %s" % kwargs
 		Handle(message)
 
 	return result

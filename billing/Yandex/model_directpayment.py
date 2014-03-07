@@ -18,8 +18,7 @@ class TransactionsYandexDirectPaymentManager(models.Manager):
 	def Log(self, request):
 		result = None
 		
-		# Abbreviations and variables to be used in elements 
-		# according to http://api.yandex.ru/money/doc/dg/reference/notification-p2p-incoming.xml
+		# Agreement on abbreviations and variables to be used in elements
 		NOTIFICATION_TYPE	= 'notification_type'
 		OPERATION_ID		= 'operation_id'
 		AMOUNT				= 'amount'
@@ -32,9 +31,8 @@ class TransactionsYandexDirectPaymentManager(models.Manager):
 
 		if request.method == "POST":
 			transaction = TransactionsYandexDirectPayment()
-
 			transaction_id = None
-			purses_hash = None
+			purses_object = None
 			codepro = "true"
 			
 			if NOTIFICATION_TYPE in request.POST:
@@ -54,74 +52,68 @@ class TransactionsYandexDirectPaymentManager(models.Manager):
 			if LABEL in request.POST:
 				transaction.label = request.POST[LABEL]
 				purse_hash = transaction.label
-				purses_object = purse_hash
+				purses_object = Purses.objects.Get(purse_hash = purse_hash)
+				if AMOUNT in request.POST and request.POST[AMOUNT]:
+					amount = float(request.POST[AMOUNT])
+				else:
+					amount = 0
 			if AMOUNT in request.POST:
-				amount = request.POST[AMOUNT]
-				transaction.amount = float(amount)
+				transaction.amount = request.POST[AMOUNT]
 			if SHA1_HASH_YANDEX in request.POST:
 				transaction.sha1_hash = request.POST[SHA1_HASH_YANDEX]
 			
 			try:
 				transaction.save()
 			except Exception as exc:
-				message = "TransactionsYandexDirectPayment.Log exception \
-				in transaction.save() occured: %s" % exc
+				message = "TransactionsYandexDirectPayment.Log exception in transaction.save() occured: %s" % exc
 				Handle(message)
 				return result
 			
-			# After logging transaction to DB, we check if transaction has valid HASH
-			SHA1_HASH_OURS =	request.POST[NOTIFICATION_TYPE] \
-				+ '&' + \
-				request.POST[OPERATION_ID] \
-				+ '&' + \
-				request.POST[AMOUNT] \
-				+ '&' + \
-				request.POST[CURRENCY] \
-				+ '&' + \
-				request.POST[DATETIME] \
-				+ '&' + \
-				request.POST[SENDER] \
-				+ '&' + \
-				request.POST[CODEPRO] \
-				+ '&' + \
-				NOTIFICATION_SECRET \
-				+ '&' + \
-				request.POST[LABEL]
+			# Code for landing money in our system
+			# Order and content according to http://api.yandex.ru/money/doc/dg/reference/notification-p2p-incoming.xml
+			SHA1_HASH_OURS = 	request.POST[NOTIFICATION_TYPE] \
+						+ '&' + request.POST[OPERATION_ID] \
+						+ '&' + request.POST[AMOUNT] \
+						+ '&' + request.POST[CURRENCY] \
+						+ '&' + request.POST[DATETIME] \
+						+ '&' + request.POST[SENDER] \
+						+ '&' + request.POST[CODEPRO] \
+						+ '&' + NOTIFICATION_SECRET \
+						+ '&' + request.POST[LABEL]
 		
 			sha1_hash_ours = hashlib.sha1(SHA1_HASH_OURS).hexdigest()
 			sha1_hash_yandex = request.POST[SHA1_HASH_YANDEX]
 		
-			# If valid HASH, then we continue with landing money to account of user
 			if sha1_hash_ours == sha1_hash_yandex:
-				if purses_hash:
-					# As we process transactions in realtime and automatically, we do not 
-					# want protected transactions (because if user made a purchase and then made money-back 
-					# transaction thanks to codepro = "true", then we would not receive a money-back transaction
-					# notification from Yandex.Money and cannot get money back from user account.
-					# So, we process only non-protected transactions. For protected transactions users will
-					# not get update on their account balance, and will be able to get their money back
-					if codepro == "false":
-						credit_result = Credit(purse_hash = purse_hash, amount = amount)
-						if credit_result:
-							result = credit_result
+				if transaction_id:
+					if purses_object:
+						account_id = purses_object.account_id
+						if codepro == "false": # we accept only unlocked transactions
+							credit_result = Credit(amount = amount, account_id = account_id, transaction_id = transaction_id)
+							if credit_result:
+								result = True
+							else:
+								message = "TransactionsYandexDirectPayment.Log error: \
+								Credit operation returned False for: account_id: %s, \
+								amount = %s, transaction_id = %s" % (account_id, amount, transaction_id)
+								Handle(message)
 						else:
-							message = "TransactionsYandexDirectPayment.Log error \
-							Credit operation resulted in False for account_id: %s" % account_id
+							message = "TransactionsYandexDirectPayment.Log warn: \
+							Credit operation canceled because we've got protected transaction \
+							for account_id = %s, transaction_id = %s" % (account_id, transaction_id)
 							Handle(message)
 					else:
-						message = "TransactionsYandexDirectPayment.Log warn \
-						Credit operation canceled because we've got protected \
-						transaction for account_id: %s" % account_id
-							Handle(message)
+						message = "TransactionsYandexDirectPayment.Log error: \
+						Transaction has no CUSTOM key so I don't know what's the purse hash \
+						should be used for transaction_id = %s" % transaction_id
+						Handle(message)
 				else:
-					message = "TransactionsYandexDirectPayment.Log error \
-					Transaction has not CUSTOM key so I don't know what's the purse \
-					id should be used. Transaction id is: %s" % transaction.txn_id
+					message = "TransactionsYandexDirectPayment.Log error: \
+					request has no transaction_id key at all. Yandex didn't send us? Impossible."
 					Handle(message)
 			else:
-				message = "TransactionsYandexDirectPayment.Log error \
-				hash string from sender (we supposed it was Yandex Money) \
-				not matched! Looks like a hack"
+				message = "TransactionsYandexDirectPayment.Log error: \
+				hash string from sender (we supposed it was Yandex Money) not matched! Looks like a hack"
 				Handle(message)
 		return result
 		
