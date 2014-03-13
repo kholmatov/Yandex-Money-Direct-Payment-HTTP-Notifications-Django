@@ -2,6 +2,7 @@ from django.db import models
 from datetime import *
 
 from billing.operations import Credit
+from billing.models import Purses
 
 # Required for matching only valid-formatted requests from Provider
 import re
